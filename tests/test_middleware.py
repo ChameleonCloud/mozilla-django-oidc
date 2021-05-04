@@ -137,6 +137,9 @@ class SessionRefreshTokenMiddlewareTestCase(TestCase):
         self.assertEqual(expected_query, parse_qs(qs))
 
 
+@override_settings(OIDC_OP_AUTHORIZATION_ENDPOINT='http://example.com/authorize')
+@override_settings(OIDC_RP_CLIENT_ID='foo')
+@override_settings(OIDC_RENEW_TOKEN_EXPIRY_SECONDS=120)
 class RefreshOIDCAccessTokenMiddlewareTestCase(TestCase):
     def setUp(self):
         self.factory = RequestFactory()

@@ -1,4 +1,6 @@
 import logging
+import requests
+from requests.auth import HTTPBasicAuth
 import time
 import warnings
 
@@ -42,6 +44,45 @@ def import_from_settings(attr, *args):
 def absolutify(request, path):
     """Return the absolute URL of a path."""
     return request.build_absolute_uri(path)
+
+
+class OIDCClient:
+    def __init__(self):
+        self.verify = import_from_settings('OIDC_VERIFY_SSL', True)
+        self.timeout = import_from_settings('OIDC_TIMEOUT', None)
+        self.proxies = import_from_settings('OIDC_PROXY', None)
+
+    def get(self, endpoint, **kwargs):
+        return self.request(endpoint, method='get', **kwargs)
+
+    def post(self, endpoint, **kwargs):
+        return self.request(endpoint, method='post', **kwargs)
+
+    def request(self, endpoint, method='get', **kwargs):
+        auth = kwargs.pop('auth', None)
+        data = kwargs.pop('data', None)
+        kwargs.setdefault('verify', self.verify)
+        kwargs.setdefault('timeout', self.timeout)
+        kwargs.setdefault('proxies', self.proxies)
+
+        if (auth is None and (isinstance(data, dict) and 'client_id' in data)
+            and import_from_settings('OIDC_TOKEN_USE_BASIC_AUTH', False)):
+            # When Basic auth is defined, create the Auth Header and remove
+            # secret from payload.
+            user = data.get('client_id')
+            pw = data.get('client_secret')
+            auth = HTTPBasicAuth(user, pw)
+            del data['client_secret']
+
+        response = requests.request(
+            method,
+            endpoint,
+            data=data,
+            auth=auth,
+            **kwargs
+        )
+        response.raise_for_status()
+        return response.json()
 
 
 def is_authenticated(user):

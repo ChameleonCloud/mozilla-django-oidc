@@ -14,7 +14,8 @@ import requests
 from mozilla_django_oidc.auth import OIDCAuthenticationBackend, store_tokens
 from mozilla_django_oidc.utils import (absolutify,
                                        add_state_and_nonce_to_session,
-                                       import_from_settings)
+                                       import_from_settings,
+                                       OIDCClient)
 
 try:
     from urllib.parse import urlencode
@@ -54,6 +55,7 @@ class SessionRefresh(MiddlewareMixin):
         self.OIDC_RP_SCOPES = self.get_settings('OIDC_RP_SCOPES', 'openid email')
         self.OIDC_USE_NONCE = self.get_settings('OIDC_USE_NONCE', True)
         self.OIDC_NONCE_SIZE = self.get_settings('OIDC_NONCE_SIZE', 32)
+        self.client = OIDCClient()
 
     @staticmethod
     def get_settings(attr, *args):
@@ -216,13 +218,8 @@ class RefreshOIDCAccessToken(SessionRefresh):
         }
 
         try:
-            response = requests.post(
-                token_url,
-                data=token_payload,
-                verify=import_from_settings('OIDC_VERIFY_SSL', True)
-            )
-            response.raise_for_status()
-            token_info = response.json()
+            token_info = self.client.post(
+                import_from_settings('OIDC_OP_TOKEN_ENDPOINT'), token_payload)
         except requests.exceptions.Timeout:
             LOGGER.debug('timed out refreshing access token')
             return

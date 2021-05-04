@@ -2,9 +2,7 @@ import base64
 import hashlib
 import json
 import logging
-import requests
 import six
-from requests.auth import HTTPBasicAuth
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.backends import ModelBackend
@@ -17,7 +15,8 @@ from josepy.b64 import b64decode
 from josepy.jwk import JWK
 from josepy.jws import JWS, Header
 
-from mozilla_django_oidc.utils import absolutify, import_from_settings
+from mozilla_django_oidc.utils import (absolutify, import_from_settings,
+                                       OIDCClient)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -72,6 +71,7 @@ class OIDCAuthenticationBackend(ModelBackend):
             raise ImproperlyConfigured(msg.format(self.OIDC_RP_SIGN_ALGO))
 
         self.UserModel = get_user_model()
+        self.client = OIDCClient()
 
     @staticmethod
     def get_settings(attr, *args):
@@ -154,14 +154,7 @@ class OIDCAuthenticationBackend(ModelBackend):
 
     def retrieve_matching_jwk(self, token):
         """Get the signing key by exploring the JWKS endpoint of the OP."""
-        response_jwks = requests.get(
-            self.OIDC_OP_JWKS_ENDPOINT,
-            verify=self.get_settings('OIDC_VERIFY_SSL', True),
-            timeout=self.get_settings('OIDC_TIMEOUT', None),
-            proxies=self.get_settings('OIDC_PROXY', None)
-        )
-        response_jwks.raise_for_status()
-        jwks = response_jwks.json()
+        jwks = self.client.get(self.OIDC_OP_JWKS_ENDPOINT)
 
         # Compute the current header from the given token to find a match
         jws = JWS.from_compact(token)
@@ -224,40 +217,15 @@ class OIDCAuthenticationBackend(ModelBackend):
 
     def get_token(self, payload):
         """Return token object as a dictionary."""
-
-        auth = None
-        if self.get_settings('OIDC_TOKEN_USE_BASIC_AUTH', False):
-            # When Basic auth is defined, create the Auth Header and remove secret from payload.
-            user = payload.get('client_id')
-            pw = payload.get('client_secret')
-
-            auth = HTTPBasicAuth(user, pw)
-            del payload['client_secret']
-
-        response = requests.post(
-            self.OIDC_OP_TOKEN_ENDPOINT,
-            data=payload,
-            auth=auth,
-            verify=self.get_settings('OIDC_VERIFY_SSL', True),
-            timeout=self.get_settings('OIDC_TIMEOUT', None),
-            proxies=self.get_settings('OIDC_PROXY', None))
-        response.raise_for_status()
-        return response.json()
+        return self.client.post(self.OIDC_OP_TOKEN_ENDPOINT, data=payload)
 
     def get_userinfo(self, access_token, id_token, payload):
         """Return user details dictionary. The id_token and payload are not used in
         the default implementation, but may be used when overriding this method"""
 
-        user_response = requests.get(
-            self.OIDC_OP_USER_ENDPOINT,
-            headers={
-                'Authorization': 'Bearer {0}'.format(access_token)
-            },
-            verify=self.get_settings('OIDC_VERIFY_SSL', True),
-            timeout=self.get_settings('OIDC_TIMEOUT', None),
-            proxies=self.get_settings('OIDC_PROXY', None))
-        user_response.raise_for_status()
-        return user_response.json()
+        return self.client.get(self.OIDC_OP_USER_ENDPOINT, headers={
+            'Authorization': 'Bearer {0}'.format(access_token)
+        })
 
     def authenticate(self, request, **kwargs):
         """Authenticates a user based on the OIDC code flow."""
@@ -288,7 +256,8 @@ class OIDCAuthenticationBackend(ModelBackend):
         }
 
         # Get the token
-        token_info = self.get_token(token_payload)
+        token_info = self.client.post(
+            self.OIDC_OP_TOKEN_ENDPOINT, data=token_payload)
         id_token = token_info.get('id_token')
         access_token = token_info.get('access_token')
         refresh_token = token_info.get('refresh_token')

@@ -16,6 +16,7 @@ from mozilla_django_oidc.auth import (
     default_username_algo,
     OIDCAuthenticationBackend,
 )
+from mozilla_django_oidc.utils import OIDCClient
 
 
 User = get_user_model()
@@ -49,7 +50,10 @@ class OIDCAuthenticationBackendTestCase(TestCase):
     @override_settings(OIDC_OP_USER_ENDPOINT='https://server.example.com/user')
     @override_settings(OIDC_RP_CLIENT_ID='example_id')
     @override_settings(OIDC_RP_CLIENT_SECRET='client_secret')
-    def setUp(self):
+    @patch('mozilla_django_oidc.auth.OIDCClient')
+    def setUp(self, client_mock):
+        self.client = Mock(spec=OIDCClient)
+        client_mock.return_value = self.client
         self.backend = OIDCAuthenticationBackend()
 
     def test_missing_request_arg(self):
@@ -57,26 +61,21 @@ class OIDCAuthenticationBackendTestCase(TestCase):
         self.assertEqual(self.backend.authenticate(request=None), None)
 
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend.verify_token')
-    @patch('mozilla_django_oidc.auth.requests')
-    def test_invalid_token(self, request_mock, token_mock):
+    def test_invalid_token(self, token_mock):
         """Test authentication with an invalid token."""
         auth_request = RequestFactory().get('/foo', {'code': 'foo',
                                                      'state': 'bar'})
         auth_request.session = {}
 
         token_mock.return_value = None
-        get_json_mock = Mock()
-        get_json_mock.json.return_value = {
+        self.client.get.return_value = {
             'nickname': 'username',
             'email': 'email@example.com'
         }
-        request_mock.get.return_value = get_json_mock
-        post_json_mock = Mock()
-        post_json_mock.json.return_value = {
+        self.client.post.return_value = {
             'id_token': 'id_token',
             'accesss_token': 'access_token'
         }
-        request_mock.post.return_value = post_json_mock
         self.assertEqual(self.backend.authenticate(request=auth_request), None)
 
     @override_settings(OIDC_ALLOW_UNSECURED_JWT=True)
@@ -220,9 +219,8 @@ class OIDCAuthenticationBackendTestCase(TestCase):
 
     @override_settings(ROOT_URLCONF='tests.namespaced_urls')
     @override_settings(OIDC_AUTHENTICATION_CALLBACK_URL='namespace:oidc_authentication_callback')
-    @patch('mozilla_django_oidc.auth.requests')
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend.verify_token')
-    def test_successful_authentication_existing_user_namespaced(self, token_mock, request_mock):
+    def test_successful_authentication_existing_user_namespaced(self, token_mock):
         """Test successful authentication for existing user."""
         auth_request = RequestFactory().get('/foo', {'code': 'foo',
                                                      'state': 'bar'})
@@ -231,18 +229,14 @@ class OIDCAuthenticationBackendTestCase(TestCase):
         user = User.objects.create_user(username='a_username',
                                         email='email@example.com')
         token_mock.return_value = True
-        get_json_mock = Mock()
-        get_json_mock.json.return_value = {
+        self.client.get.return_value = {
             'nickname': 'a_username',
             'email': 'email@example.com'
         }
-        request_mock.get.return_value = get_json_mock
-        post_json_mock = Mock()
-        post_json_mock.json.return_value = {
+        self.client.post.return_value = {
             'id_token': 'id_token',
             'access_token': 'access_granted'
         }
-        request_mock.post.return_value = post_json_mock
 
         post_data = {
             'client_id': 'example_id',
@@ -253,23 +247,17 @@ class OIDCAuthenticationBackendTestCase(TestCase):
         }
         self.assertEqual(self.backend.authenticate(request=auth_request), user)
         token_mock.assert_called_once_with('id_token', nonce=None)
-        request_mock.post.assert_called_once_with('https://server.example.com/token',
-                                                  data=post_data,
-                                                  auth=None,
-                                                  verify=True,
-                                                  timeout=None,
-                                                  proxies=None)
-        request_mock.get.assert_called_once_with(
+        self.client.post.assert_called_once_with(
+            'https://server.example.com/token',
+            data=post_data
+        )
+        self.client.get.assert_called_once_with(
             'https://server.example.com/user',
-            headers={'Authorization': 'Bearer access_granted'},
-            verify=True,
-            timeout=None,
-            proxies=None
+            headers={'Authorization': 'Bearer access_granted'}
         )
 
-    @patch('mozilla_django_oidc.auth.requests')
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend.verify_token')
-    def test_successful_authentication_existing_user(self, token_mock, request_mock):
+    def test_successful_authentication_existing_user(self, token_mock):
         """Test successful authentication for existing user."""
         auth_request = RequestFactory().get('/foo', {'code': 'foo',
                                                      'state': 'bar'})
@@ -278,18 +266,14 @@ class OIDCAuthenticationBackendTestCase(TestCase):
         user = User.objects.create_user(username='a_username',
                                         email='email@example.com')
         token_mock.return_value = True
-        get_json_mock = Mock()
-        get_json_mock.json.return_value = {
+        self.client.get.return_value = {
             'nickname': 'a_username',
             'email': 'email@example.com'
         }
-        request_mock.get.return_value = get_json_mock
-        post_json_mock = Mock()
-        post_json_mock.json.return_value = {
+        self.client.post.return_value = {
             'id_token': 'id_token',
             'access_token': 'access_granted'
         }
-        request_mock.post.return_value = post_json_mock
 
         post_data = {
             'client_id': 'example_id',
@@ -300,25 +284,17 @@ class OIDCAuthenticationBackendTestCase(TestCase):
         }
         self.assertEqual(self.backend.authenticate(request=auth_request), user)
         token_mock.assert_called_once_with('id_token', nonce=None)
-        request_mock.post.assert_called_once_with('https://server.example.com/token',
-                                                  data=post_data,
-                                                  auth=None,
-                                                  verify=True,
-                                                  timeout=None,
-                                                  proxies=None)
-        request_mock.get.assert_called_once_with(
+        self.client.post.assert_called_once_with('https://server.example.com/token',
+                                                  data=post_data)
+        self.client.get.assert_called_once_with(
             'https://server.example.com/user',
-            headers={'Authorization': 'Bearer access_granted'},
-            verify=True,
-            timeout=None,
-            proxies=None
+            headers={'Authorization': 'Bearer access_granted'}
         )
 
     @override_settings(OIDC_STORE_ACCESS_TOKEN=True)
     @override_settings(OIDC_STORE_ID_TOKEN=True)
-    @patch('mozilla_django_oidc.auth.requests')
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend.verify_token')
-    def test_successful_authentication_existing_user_upper_case(self, token_mock, request_mock):
+    def test_successful_authentication_existing_user_upper_case(self, token_mock):
         """Test successful authentication for existing user regardless of email case."""
         auth_request = RequestFactory().get('/foo', {'code': 'foo',
                                                      'state': 'bar'})
@@ -327,18 +303,14 @@ class OIDCAuthenticationBackendTestCase(TestCase):
         user = User.objects.create_user(username='a_username',
                                         email='EMAIL@EXAMPLE.COM')
         token_mock.return_value = True
-        get_json_mock = Mock()
-        get_json_mock.json.return_value = {
+        self.client.get.return_value = {
             'nickname': 'a_username',
             'email': 'email@example.com'
         }
-        request_mock.get.return_value = get_json_mock
-        post_json_mock = Mock()
-        post_json_mock.json.return_value = {
+        self.client.post.return_value = {
             'id_token': 'id_token',
             'access_token': 'access_granted'
         }
-        request_mock.post.return_value = post_json_mock
 
         post_data = {
             'client_id': 'example_id',
@@ -349,26 +321,18 @@ class OIDCAuthenticationBackendTestCase(TestCase):
         }
         self.assertEqual(self.backend.authenticate(request=auth_request), user)
         token_mock.assert_called_once_with('id_token', nonce=None)
-        request_mock.post.assert_called_once_with('https://server.example.com/token',
-                                                  data=post_data,
-                                                  auth=None,
-                                                  verify=True,
-                                                  timeout=None,
-                                                  proxies=None)
-        request_mock.get.assert_called_once_with(
+        self.client.post.assert_called_once_with('https://server.example.com/token',
+                                                  data=post_data)
+        self.client.get.assert_called_once_with(
             'https://server.example.com/user',
-            headers={'Authorization': 'Bearer access_granted'},
-            verify=True,
-            timeout=None,
-            proxies=None
+            headers={'Authorization': 'Bearer access_granted'}
         )
         self.assertEqual(auth_request.session.get('oidc_id_token'), 'id_token')
         self.assertEqual(auth_request.session.get('oidc_access_token'), 'access_granted')
 
-    @patch('mozilla_django_oidc.auth.requests')
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend.verify_token')
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend.verify_claims')
-    def test_failed_authentication_verify_claims(self, claims_mock, token_mock, request_mock):
+    def test_failed_authentication_verify_claims(self, claims_mock, token_mock):
         """Test successful authentication for existing user."""
         auth_request = RequestFactory().get('/foo', {'code': 'foo',
                                                      'state': 'bar'})
@@ -378,19 +342,15 @@ class OIDCAuthenticationBackendTestCase(TestCase):
                                  email='email@example.com')
         token_mock.return_value = True
         claims_mock.return_value = False
-        get_json_mock = Mock()
         claims_response = {
             'nickname': 'a_username',
             'email': 'email@example.com'
         }
-        get_json_mock.json.return_value = claims_response
-        request_mock.get.return_value = get_json_mock
-        post_json_mock = Mock()
-        post_json_mock.json.return_value = {
+        self.client.get.return_value = claims_response
+        self.client.post.return_value = {
             'id_token': 'id_token',
             'access_token': 'access_granted'
         }
-        request_mock.post.return_value = post_json_mock
 
         post_data = {
             'client_id': 'example_id',
@@ -402,24 +362,16 @@ class OIDCAuthenticationBackendTestCase(TestCase):
         self.assertIsNone(self.backend.authenticate(request=auth_request))
         token_mock.assert_called_once_with('id_token', nonce=None)
         claims_mock.assert_called_once_with(claims_response)
-        request_mock.post.assert_called_once_with('https://server.example.com/token',
-                                                  data=post_data,
-                                                  auth=None,
-                                                  verify=True,
-                                                  timeout=None,
-                                                  proxies=None)
-        request_mock.get.assert_called_once_with(
+        self.client.post.assert_called_once_with('https://server.example.com/token',
+                                                  data=post_data)
+        self.client.get.assert_called_once_with(
             'https://server.example.com/user',
-            headers={'Authorization': 'Bearer access_granted'},
-            verify=True,
-            timeout=None,
-            proxies=None
+            headers={'Authorization': 'Bearer access_granted'}
         )
 
     @patch.object(settings, 'OIDC_USERNAME_ALGO')
-    @patch('mozilla_django_oidc.auth.requests')
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend.verify_token')
-    def test_successful_authentication_new_user(self, token_mock, request_mock, algo_mock):
+    def test_successful_authentication_new_user(self, token_mock, algo_mock):
         """Test successful authentication and user creation."""
         auth_request = RequestFactory().get('/foo', {'code': 'foo',
                                                      'state': 'bar'})
@@ -427,18 +379,14 @@ class OIDCAuthenticationBackendTestCase(TestCase):
 
         algo_mock.return_value = 'username_algo'
         token_mock.return_value = True
-        get_json_mock = Mock()
-        get_json_mock.json.return_value = {
+        self.client.get.return_value = {
             'nickname': 'a_username',
             'email': 'email@example.com'
         }
-        request_mock.get.return_value = get_json_mock
-        post_json_mock = Mock()
-        post_json_mock.json.return_value = {
+        self.client.post.return_value = {
             'id_token': 'id_token',
             'access_token': 'access_granted'
         }
-        request_mock.post.return_value = post_json_mock
         post_data = {
             'client_id': 'example_id',
             'client_secret': 'client_secret',
@@ -454,88 +402,12 @@ class OIDCAuthenticationBackendTestCase(TestCase):
         self.assertEqual(user.username, 'username_algo')
 
         token_mock.assert_called_once_with('id_token', nonce=None)
-        request_mock.post.assert_called_once_with('https://server.example.com/token',
-                                                  data=post_data,
-                                                  auth=None,
-                                                  verify=True,
-                                                  timeout=None,
-                                                  proxies=None)
-        request_mock.get.assert_called_once_with(
+        self.client.post.assert_called_once_with('https://server.example.com/token',
+                                                  data=post_data)
+        self.client.get.assert_called_once_with(
             'https://server.example.com/user',
             headers={'Authorization': 'Bearer access_granted'},
-            verify=True,
-            timeout=None,
-            proxies=None,
         )
-
-    @override_settings(OIDC_TOKEN_USE_BASIC_AUTH=True)
-    @override_settings(OIDC_STORE_ACCESS_TOKEN=True)
-    @override_settings(OIDC_STORE_ID_TOKEN=True)
-    @patch('mozilla_django_oidc.auth.requests')
-    @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend.verify_token')
-    def test_successful_authentication_basic_auth_token(self, token_mock, request_mock):
-        """
-        Test successful authentication when using HTTP basic authentication
-        for token endpoint authentication.
-        """
-        auth_request = RequestFactory().get('/foo', {'code': 'foo',
-                                                     'state': 'bar'})
-        auth_request.session = {}
-
-        user = User.objects.create_user(username='a_username',
-                                        email='EMAIL@EXAMPLE.COM')
-        token_mock.return_value = True
-        get_json_mock = Mock()
-        get_json_mock.json.return_value = {
-            'nickname': 'a_username',
-            'email': 'email@example.com'
-        }
-        request_mock.get.return_value = get_json_mock
-        post_json_mock = Mock()
-        post_json_mock.json.return_value = {
-            'id_token': 'id_token',
-            'access_token': 'access_granted'
-        }
-        request_mock.post.return_value = post_json_mock
-
-        post_data = {
-            'client_id': 'example_id',
-            'client_secret': 'client_secret',
-            'grant_type': 'authorization_code',
-            'code': 'foo',
-            'redirect_uri': 'http://testserver/callback/'
-        }
-        self.assertEqual(self.backend.authenticate(request=auth_request), user)
-        token_mock.assert_called_once_with('id_token', nonce=None)
-
-        # As the auth parameter is and object, we can't compare them directly
-        request_mock.post.assert_called_once()
-        post_params = request_mock.post.call_args
-        _kwargs = post_params[1]
-
-        self.assertEqual(post_params[0][0], 'https://server.example.com/token')
-        # Test individual params separately
-        sent_data = _kwargs['data']
-        self.assertEqual(sent_data['client_id'], post_data['client_id'])
-        self.assertTrue('client_secret' not in _kwargs['data'])
-        self.assertEqual(sent_data['grant_type'], post_data['grant_type'])
-        self.assertEqual(sent_data['code'], post_data['code'])
-        self.assertEqual(sent_data['redirect_uri'], post_data['redirect_uri'])
-
-        auth = _kwargs['auth']  # requests.auth.HTTPBasicAuth
-        self.assertEqual(auth.username, 'example_id')
-        self.assertEqual(auth.password, 'client_secret')
-        self.assertEqual(_kwargs['verify'], True)
-
-        request_mock.get.assert_called_once_with(
-            'https://server.example.com/user',
-            headers={'Authorization': 'Bearer access_granted'},
-            verify=True,
-            timeout=None,
-            proxies=None
-        )
-        self.assertEqual(auth_request.session.get('oidc_id_token'), 'id_token')
-        self.assertEqual(auth_request.session.get('oidc_access_token'), 'access_granted')
 
     def test_authenticate_no_code_no_state(self):
         """Test authenticate with wrong parameters."""
@@ -547,8 +419,7 @@ class OIDCAuthenticationBackendTestCase(TestCase):
 
     @override_settings(OIDC_USE_NONCE=False)
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend._verify_jws')
-    @patch('mozilla_django_oidc.auth.requests')
-    def test_jwt_decode_params(self, request_mock, jws_mock):
+    def test_jwt_decode_params(self, jws_mock):
         """Test jwt verification signature."""
         auth_request = RequestFactory().get('/foo', {'code': 'foo',
                                                      'state': 'bar'})
@@ -557,18 +428,14 @@ class OIDCAuthenticationBackendTestCase(TestCase):
         jws_mock.return_value = json.dumps({
             'aud': 'audience'
         }).encode('utf-8')
-        get_json_mock = Mock()
-        get_json_mock.json.return_value = {
+        self.client.get.return_value = {
             'nickname': 'username',
             'email': 'email@example.com'
         }
-        request_mock.get.return_value = get_json_mock
-        post_json_mock = Mock()
-        post_json_mock.json.return_value = {
+        self.client.post.return_value = {
             'id_token': 'token',
             'access_token': 'access_token'
         }
-        request_mock.post.return_value = post_json_mock
         self.backend.authenticate(request=auth_request)
         calls = [
             call(force_bytes('token'), 'client_secret')
@@ -578,8 +445,7 @@ class OIDCAuthenticationBackendTestCase(TestCase):
     @override_settings(OIDC_VERIFY_JWT=False)
     @override_settings(OIDC_USE_NONCE=False)
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend._verify_jws')
-    @patch('mozilla_django_oidc.auth.requests')
-    def test_jwt_decode_params_verify_false(self, request_mock, jws_mock):
+    def test_jwt_decode_params_verify_false(self, jws_mock):
         """Test jwt verification signature with verify False"""
         auth_request = RequestFactory().get('/foo', {'code': 'foo',
                                                      'state': 'bar'})
@@ -588,18 +454,14 @@ class OIDCAuthenticationBackendTestCase(TestCase):
         jws_mock.return_value = json.dumps({
             'aud': 'audience'
         }).encode('utf-8')
-        get_json_mock = Mock()
-        get_json_mock.json.return_value = {
+        self.client.get.return_value = {
             'nickname': 'username',
             'email': 'email@example.com'
         }
-        request_mock.get.return_value = get_json_mock
-        post_json_mock = Mock()
-        post_json_mock.json.return_value = {
+        self.client.post.return_value = {
             'id_token': 'token',
             'access_token': 'access_token'
         }
-        request_mock.post.return_value = post_json_mock
         calls = [
             call(force_bytes('token'), 'client_secret')
         ]
@@ -622,8 +484,7 @@ class OIDCAuthenticationBackendTestCase(TestCase):
     @override_settings(OIDC_CREATE_USER=False)
     @override_settings(OIDC_USE_NONCE=False)
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend._verify_jws')
-    @patch('mozilla_django_oidc.auth.requests')
-    def test_create_user_disabled(self, request_mock, jws_mock):
+    def test_create_user_disabled(self, jws_mock):
         """Test with user creation disabled and no user found."""
         auth_request = RequestFactory().get('/foo', {'code': 'foo',
                                                      'state': 'bar'})
@@ -632,24 +493,19 @@ class OIDCAuthenticationBackendTestCase(TestCase):
         jws_mock.return_value = json.dumps({
             'nonce': 'nonce'
         }).encode('utf-8')
-        get_json_mock = Mock()
-        get_json_mock.json.return_value = {
+        self.client.get.return_value = {
             'nickname': 'a_username',
             'email': 'email@example.com'
         }
-        request_mock.get.return_value = get_json_mock
-        post_json_mock = Mock()
-        post_json_mock.json.return_value = {
+        self.client.post.return_value = {
             'id_token': 'id_token',
             'access_token': 'access_granted'
         }
-        request_mock.post.return_value = post_json_mock
         self.assertEqual(self.backend.authenticate(request=auth_request), None)
 
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend._verify_jws')
-    @patch('mozilla_django_oidc.auth.requests')
     @override_settings(OIDC_USE_NONCE=False)
-    def test_create_user_enabled(self, request_mock, jws_mock):
+    def test_create_user_enabled(self, jws_mock):
         """Test with user creation enabled and no user found."""
         auth_request = RequestFactory().get('/foo', {'code': 'foo',
                                                      'state': 'bar'})
@@ -659,26 +515,21 @@ class OIDCAuthenticationBackendTestCase(TestCase):
         jws_mock.return_value = json.dumps({
             'nonce': 'nonce'
         }).encode('utf-8')
-        get_json_mock = Mock()
-        get_json_mock.json.return_value = {
+        self.client.get.return_value = {
             'nickname': 'a_username',
             'email': 'email@example.com'
         }
-        request_mock.get.return_value = get_json_mock
-        post_json_mock = Mock()
-        post_json_mock.json.return_value = {
+        self.client.post.return_value = {
             'id_token': 'id_token',
             'access_token': 'access_granted'
         }
-        request_mock.post.return_value = post_json_mock
         self.assertEqual(self.backend.authenticate(request=auth_request),
                          User.objects.get(email='email@example.com'))
 
     @patch.object(settings, 'OIDC_USERNAME_ALGO')
     @override_settings(OIDC_USE_NONCE=False)
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend._verify_jws')
-    @patch('mozilla_django_oidc.auth.requests')
-    def test_custom_username_algo(self, request_mock, jws_mock, algo_mock):
+    def test_custom_username_algo(self, jws_mock, algo_mock):
         """Test user creation with custom username algorithm."""
         auth_request = RequestFactory().get('/foo', {'code': 'foo',
                                                      'state': 'bar'})
@@ -689,26 +540,21 @@ class OIDCAuthenticationBackendTestCase(TestCase):
         jws_mock.return_value = json.dumps({
             'nonce': 'nonce'
         }).encode('utf-8')
-        get_json_mock = Mock()
-        get_json_mock.json.return_value = {
+        self.client.get.return_value = {
             'nickname': 'a_username',
             'email': 'email@example.com'
         }
-        request_mock.get.return_value = get_json_mock
-        post_json_mock = Mock()
-        post_json_mock.json.return_value = {
+        self.client.post.return_value = {
             'id_token': 'id_token',
             'access_token': 'access_granted'
         }
-        request_mock.post.return_value = post_json_mock
         self.assertEqual(self.backend.authenticate(request=auth_request),
                          User.objects.get(username='username_algo'))
 
     @override_settings(OIDC_USE_NONCE=False,
                        OIDC_USERNAME_ALGO='tests.test_auth.dotted_username_algo_callback')
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend._verify_jws')
-    @patch('mozilla_django_oidc.auth.requests')
-    def test_custom_username_algo_dotted_path(self, request_mock, jws_mock):
+    def test_custom_username_algo_dotted_path(self, jws_mock):
         """Test user creation with custom username algorithm with a dotted path."""
         auth_request = RequestFactory().get('/foo', {'code': 'foo',
                                                      'state': 'bar'})
@@ -718,25 +564,20 @@ class OIDCAuthenticationBackendTestCase(TestCase):
         jws_mock.return_value = json.dumps({
             'nonce': 'nonce'
         }).encode('utf-8')
-        get_json_mock = Mock()
-        get_json_mock.json.return_value = {
+        self.client.get.return_value = {
             'nickname': 'a_username',
             'email': 'email@example.com'
         }
-        request_mock.get.return_value = get_json_mock
-        post_json_mock = Mock()
-        post_json_mock.json.return_value = {
+        self.client.post.return_value = {
             'id_token': 'id_token',
             'access_token': 'access_granted'
         }
-        request_mock.post.return_value = post_json_mock
         self.assertEqual(self.backend.authenticate(request=auth_request),
                          User.objects.get(username='dotted_username_algo'))
 
     @override_settings(OIDC_USE_NONCE=False)
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend._verify_jws')
-    @patch('mozilla_django_oidc.auth.requests')
-    def test_duplicate_emails_exact(self, request_mock, jws_mock):
+    def test_duplicate_emails_exact(self, jws_mock):
         """Test auth with two users having the same email."""
         auth_request = RequestFactory().get('/foo', {'code': 'foo',
                                                      'state': 'bar'})
@@ -747,24 +588,19 @@ class OIDCAuthenticationBackendTestCase(TestCase):
         jws_mock.return_value = json.dumps({
             'nonce': 'nonce'
         }).encode('utf-8')
-        get_json_mock = Mock()
-        get_json_mock.json.return_value = {
+        self.client.get.return_value = {
             'nickname': 'a_username',
             'email': 'email@example.com'
         }
-        request_mock.get.return_value = get_json_mock
-        post_json_mock = Mock()
-        post_json_mock.json.return_value = {
+        self.client.post.return_value = {
             'id_token': 'id_token',
             'access_token': 'access_granted'
         }
-        request_mock.post.return_value = post_json_mock
         self.assertEqual(self.backend.authenticate(request=auth_request), None)
 
     @override_settings(OIDC_USE_NONCE=False)
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend._verify_jws')
-    @patch('mozilla_django_oidc.auth.requests')
-    def test_duplicate_emails_case_mismatch(self, request_mock, jws_mock):
+    def test_duplicate_emails_case_mismatch(self, jws_mock):
         """Test auth with two users having the same email, with different case."""
         auth_request = RequestFactory().get('/foo', {'code': 'foo',
                                                      'state': 'bar'})
@@ -775,25 +611,20 @@ class OIDCAuthenticationBackendTestCase(TestCase):
         jws_mock.return_value = json.dumps({
             'nonce': 'nonce'
         }).encode('utf-8')
-        get_json_mock = Mock()
-        get_json_mock.json.return_value = {
+        self.client.get.return_value = {
             'nickname': 'a_username',
             'email': 'email@example.com'
         }
-        request_mock.get.return_value = get_json_mock
-        post_json_mock = Mock()
-        post_json_mock.json.return_value = {
+        self.client.post.return_value = {
             'id_token': 'id_token',
             'access_token': 'access_granted'
         }
-        request_mock.post.return_value = post_json_mock
         self.assertEqual(self.backend.authenticate(request=auth_request), None)
 
     @override_settings(OIDC_USE_NONCE=False)
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend.update_user')
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend._verify_jws')
-    @patch('mozilla_django_oidc.auth.requests')
-    def test_custom_update_user(self, request_mock, jws_mock, update_user_mock):
+    def test_custom_update_user(self, jws_mock, update_user_mock):
         """User updated with new claims"""
         auth_request = RequestFactory().get('/foo', {'code': 'foo',
                                                      'state': 'bar'})
@@ -810,18 +641,14 @@ class OIDCAuthenticationBackendTestCase(TestCase):
         jws_mock.return_value = json.dumps({
             'nonce': 'nonce'
         }).encode('utf-8')
-        get_json_mock = Mock()
-        get_json_mock.json.return_value = {
+        self.client.get.return_value = {
             'nickname': 'a_username',
             'email': 'email@example.com'
         }
-        request_mock.get.return_value = get_json_mock
-        post_json_mock = Mock()
-        post_json_mock.json.return_value = {
+        self.client.post.return_value = {
             'id_token': 'id_token',
             'access_token': 'access_granted'
         }
-        request_mock.post.return_value = post_json_mock
         self.assertEqual(self.backend.authenticate(request=auth_request), None)
 
         self.assertEqual(User.objects.get().first_name, 'a_username')
@@ -841,7 +668,7 @@ class OIDCAuthenticationBackendRS256WithKeyTestCase(TestCase):
 
     @override_settings(OIDC_USE_NONCE=False)
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend._verify_jws')
-    @patch('mozilla_django_oidc.auth.requests')
+    @patch('mozilla_django_oidc.auth.OIDCClient', autospec=True)
     def test_jwt_verify_sign_key(self, request_mock, jws_mock):
         """Test jwt verification signature."""
         auth_request = RequestFactory().get('/foo', {'code': 'foo',
@@ -885,7 +712,7 @@ class OIDCAuthenticationBackendRS256WithJwksEndpointTestCase(TestCase):
     @override_settings(OIDC_USE_NONCE=False)
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend._verify_jws')
     @patch('mozilla_django_oidc.auth.OIDCAuthenticationBackend.retrieve_matching_jwk')
-    @patch('mozilla_django_oidc.auth.requests')
+    @patch('mozilla_django_oidc.auth.OIDCClient', autospec=True)
     def test_jwt_verify_sign_key_calls(self, request_mock, jwk_mock, jws_mock):
         """Test jwt verification signature."""
         auth_request = RequestFactory().get('/foo', {'code': 'foo',
@@ -923,7 +750,7 @@ class OIDCAuthenticationBackendRS256WithJwksEndpointTestCase(TestCase):
         ]
         jws_mock.assert_has_calls(calls)
 
-    @patch('mozilla_django_oidc.auth.requests')
+    @patch('mozilla_django_oidc.auth.OIDCClient', autospec=True)
     def test_retrieve_matching_jwk(self, mock_requests):
         """Test retrieving valid jwk"""
 
@@ -961,7 +788,7 @@ class OIDCAuthenticationBackendRS256WithJwksEndpointTestCase(TestCase):
         jwk_key = self.backend.retrieve_matching_jwk(force_bytes(token))
         self.assertEqual(jwk_key, get_json_mock.json.return_value['keys'][0])
 
-    @patch('mozilla_django_oidc.auth.requests')
+    @patch('mozilla_django_oidc.auth.OIDCClient', autospec=True)
     def test_retrieve_matching_jwk_same_kid(self, mock_requests):
         """Test retrieving valid jwk from a list of keys with the same kid"""
 
@@ -1003,7 +830,7 @@ class OIDCAuthenticationBackendRS256WithJwksEndpointTestCase(TestCase):
         jwk_key = self.backend.retrieve_matching_jwk(force_bytes(token))
         self.assertEqual(jwk_key, get_json_mock.json.return_value['keys'][2])
 
-    @patch('mozilla_django_oidc.auth.requests')
+    @patch('mozilla_django_oidc.auth.OIDCClient', autospec=True)
     def test_retrieve_mismatcing_jwk_alg(self, mock_requests):
         """Test retrieving mismatching jwk alg"""
 
@@ -1039,7 +866,7 @@ class OIDCAuthenticationBackendRS256WithJwksEndpointTestCase(TestCase):
 
         self.assertEqual(ctx.exception.args[0], 'Could not find a valid JWKS.')
 
-    @patch('mozilla_django_oidc.auth.requests')
+    @patch('mozilla_django_oidc.auth.OIDCClient', autospec=True)
     def test_retrieve_mismatcing_jwk_kid(self, mock_requests):
         """Test retrieving mismatching jwk kid"""
 
@@ -1075,7 +902,7 @@ class OIDCAuthenticationBackendRS256WithJwksEndpointTestCase(TestCase):
 
         self.assertEqual(ctx.exception.args[0], 'Could not find a valid JWKS.')
 
-    @patch('mozilla_django_oidc.auth.requests')
+    @patch('mozilla_django_oidc.auth.OIDCClient', autospec=True)
     def test_retrieve_jwk_optional_alg(self, mock_requests):
         """Test retrieving jwk with optional alg"""
 
@@ -1108,7 +935,7 @@ class OIDCAuthenticationBackendRS256WithJwksEndpointTestCase(TestCase):
         jwk_key = self.backend.retrieve_matching_jwk(force_bytes(token))
         self.assertEqual(jwk_key, get_json_mock.json.return_value['keys'][0])
 
-    @patch('mozilla_django_oidc.auth.requests')
+    @patch('mozilla_django_oidc.auth.OIDCClient', autospec=True)
     def test_retrieve_not_existing_jwk(self, mock_requests):
         """Test retrieving jwk that doesn't exist."""
 
